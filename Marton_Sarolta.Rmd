@@ -1,0 +1,226 @@
+---
+title: "Data Science Projekt"
+author: "Sarolta Marton "
+date: '2017 március 104308 '
+output: html_document
+---
+
+The dataset used for the project is from and describes the properties of used cars advertised on E-bay in Germany.
+My aim is to predict the price of used cars, baed on the most important variables.
+Access to the dataset:
+
+https://www.kaggle.com/orgesleka/used-cars-database
+
+Over 370000 used cars scraped with Scrapy from Ebay-Kleinanzeigen. The content of the data is in german, so one has to translate it first if one can not speak german. Those fields are included: autos.csv:
+
+Original variables:
+
+dateCrawled : when this ad was first crawled, all field-values are taken from this date
+name : "name" of the car
+seller : private or dealer
+offerType
+price : the price on the ad to sell the car
+abtest
+vehicleType
+yearOfRegistration : at which year the car was first registered
+gearbox
+powerPS : power of the car in PS
+model
+kilometer : how many kilometers the car has driven
+monthOfRegistration : at which month the car was first registered
+fuelType
+brand
+notRepairedDamage : if the car has a damage which is not repaired yet
+dateCreated : the date for which the ad at ebay was created
+nrOfPictures : number of pictures in the ad (unfortunately this field contains everywhere a 0 and is thus useless (bug in crawler!) )
+postalCode
+lastSeenOnline : when the crawler saw this ad last online
+
+```
+```{r, include=FALSE}
+library(data.table)
+library(plm)
+library(ROCR)
+library(stargazer)
+library(dplyr)
+library(ggplot2)
+library(ROCR)
+library(h2o)
+library(data.table)
+setwd("C:/Users/Márton Sarolta/Desktop/CEU/Trimester 2/Data Science/Új mappa/DataScience")
+getwd()
+```
+
+Loading the dataset
+
+The dataset is stored in a comma separated values files, where the separators are semicolons. The dataset is loaded into the dataframe named as rawdata
+
+```{r, echo=FALSE}
+rm(list = ls())
+
+rawdata<-data.table(read.csv("autos.csv",na.strings=""))
+
+```
+
+Data Cleaning Part
+
+To make the prediction the most important variables are: 
+Brand, Price, Vehicletype, Yearofregistration, gearbox, powerps, kilometer, fueltype and demage informations.
+
+
+```{r}
+data<-rawdata[price>=100&powerPS>=50&powerPS<=1000&price<=900000,.(brand, price, vehicleType, yearOfRegistration, gearbox, powerPS, kilometer,  fuelType, notRepairedDamage)]
+data<-na.omit(data)
+```
+
+Summary of our data: 
+
+From our summary we can observe, that the most prefered brands are: Volkswagen, BMW, Mercedes, Opel and Audi. All of there brands produced mostly in Germany. Price has some extreme value. Probably some of them are fake price. We have 3 times more manual type gearbox than automatik. 10 times more owner say that their car is not repaired, and the most favourite fueltype is benzin and diesel.
+
+```{r}
+summary(data)
+
+```
+
+```{r, echo=FALSE}
+ggplot(data[price < 120000], aes(x = price))+ geom_histogram(binwidth = 1000)
+```
+
+```{r, echo=FALSE}
+ggplot(data, aes(x = vehicleType))+ geom_bar()
+```
+
+
+```{r,echo=FALSE}
+ggplot(data[powerPS < 750], aes(x = powerPS)) + geom_histogram(binwidth = 25)
+```
+
+
+```{r,echo=FALSE}
+ggplot(data, aes(x = gearbox))+ geom_bar( )
+```
+
+```{r, echo=FALSE}
+ggplot(data, aes(x = fuelType))+ geom_bar()
+```
+
+Descriptive Statistic:
+
+```{r}
+hist(data$yearOfRegistration, right = FALSE,  col = "red", main = "Year of Registration", xlab = "Year")
+```
+
+
+```{r, include=FALSE}
+data[,yearOfRegistration:=as.factor(yearOfRegistration)]
+```
+
+Part II
+Machine learning part.
+
+
+```{r}
+df<-data
+set.seed(1234)
+N1<-nrow(df)
+vt<-sample(1:N1,0.6*N1)
+d_train<-df[vt,]
+d_vt<-df[-vt,]
+N2<-nrow(d_vt)
+t<-sample(1:N2,0.5*N2)
+d_valid<-d_vt[t,]
+d_test<-d_vt[-t,]
+
+colnames(d_test)
+
+```
+
+
+Plot of Linear model: 
+
+Blue dots show manuell gearbox and the red ones show automatik gearbox. We can observe, that automatik gearboxes started to be more trendy after the 1990s. 
+
+```{r}
+ggplot(data, aes(yearOfRegistration, price, color=gearbox))+ geom_point()+ geom_smooth(method = 'lm', se= TRUE)
+```
+
+
+Summary of the Linear model.
+
+Price~yearOfRegistration
+
+```{r}
+lmm<-(lm(data=d_train,price~yearOfRegistration))
+summary(lmm)
+```
+
+```{r}
+lmb<-(lm(data=d_train,price~brand))
+summary(lmb)
+
+```
+
+As we are using more variables to predict the price, the R-Squared will be higher, but still not enough high.
+```{r}
+lm<-(lm(data=d_train,price~.))
+summary(lm)
+```
+
+For the following machine learning I used H2O
+
+
+```{r}
+stargazer(lm(data=d_train,price~brand))
+```
+```{r, include=FALSE}
+library(h2o)
+h2o.init()
+h2o.removeAll()
+
+dx_train <- as.h2o(d_train)  ## uploads data to H2O
+dx_valid<- as.h2o(d_valid)  ## uploads data to H2O
+dx_test <- as.h2o(d_test)
+```
+
+1, Random Forest
+
+
+```{r}
+colnames(dx_train)
+RF1<-h2o.randomForest(x=colnames(dx_train)[-2],y="price",training_frame = dx_train,validation_frame = dx_valid)
+RF1p<-h2o.performance(RF1)
+```
+
+```{r,}
+RF1p
+
+RF1t<-h2o.performance(RF1,newdata = dx_test)
+
+RF1cm<-h2o.confusionMatrix(RF1t)
+RF1cm
+```
+
+2, GBM
+
+
+```{r}
+GBM1<-h2o.gbm(x=colnames(dx_train)[-2],y="price",training_frame = dx_train,validation_frame = dx_valid)
+
+h2o.r2(GBM1, valid = TRUE)
+plot(GBM1)
+```
+
+3, Neural networks
+
+```{r}
+NN1<-h2o.deeplearning(x=colnames(dx_train)[-2],y="price",training_frame = dx_train,validation_frame = dx_valid)
+
+plot(NN1) 
+NN1
+```
+
+
+```{r, include=FALSE}
+h2o.shutdown()
+```
+
